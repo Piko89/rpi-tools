@@ -1,545 +1,400 @@
 #!/bin/bash
 
-# KNX USB Interface Yönetim Scripti
-# Raspberry Pi için knxd kurulum ve yönetim aracı
-# Kullanım: ./knx_manager.sh [install|start|stop|status|restart|config|uninstall]
+# KNXd Yönetim Scripti
+# Raspberry Pi için hazırlanmıştır
 
-# Renkler
+set -e
+
+# Renkli çıktı için
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # Renk sıfırla
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
 
-# Log dosyası
-LOG_FILE="/var/log/knxd.log"
-CONFIG_FILE="/etc/knxd.conf"
-SERVICE_FILE="/etc/systemd/system/knxd.service"
-
-# Fonksiyonlar
-print_status() {
-    echo -e "${BLUE}[INFO]${NC} $1"
+# Banner
+show_banner() {
+    clear
+    echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}║     KNXd Yönetim ve Kontrol Paneli    ║${NC}"
+    echo -e "${CYAN}║          Raspberry Pi için            ║${NC}"
+    echo -e "${CYAN}╔════════════════════════════════════════╗${NC}\n"
 }
 
-print_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1"
-}
-
-print_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
-
-print_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1"
+# Ana Menü
+show_menu() {
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${YELLOW}ANA MENÜ${NC}"
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${BLUE}1)${NC} Sistem Durumu"
+    echo -e "${BLUE}2)${NC} KNXd Kurulum"
+    echo -e "${BLUE}3)${NC} IP Router Yapılandırma"
+    echo -e "${BLUE}4)${NC} Bağlantı Testi"
+    echo -e "${BLUE}5)${NC} Grup Adresi Okuma"
+    echo -e "${BLUE}6)${NC} Grup Adresi Yazma"
+    echo -e "${BLUE}7)${NC} Grup Adresleri Dinleme"
+    echo -e "${BLUE}8)${NC} Servis Yönetimi"
+    echo -e "${BLUE}9)${NC} Logları Görüntüle"
+    echo -e "${BLUE}0)${NC} Çıkış"
+    echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 }
 
 # Root kontrolü
 check_root() {
-    if [ "$EUID" -ne 0 ]; then
-        print_error "Bu script root yetkisi ile çalıştırılmalıdır."
-        echo "Kullanım: sudo $0 $1"
+    if [ "$EUID" -ne 0 ]; then 
+        echo -e "${RED}Bu script root yetkisi ile çalıştırılmalıdır!${NC}"
+        echo "Lütfen 'sudo ./knxd_setup.sh' komutu ile çalıştırın"
         exit 1
     fi
 }
 
-# USB cihaz kontrolü
-check_usb_device() {
-    print_status "KNX USB interface aranıyor..."
+# 1) Sistem Durumu
+check_status() {
+    echo -e "\n${YELLOW}═══════════════════════════════════════${NC}"
+    echo -e "${YELLOW}  SİSTEM DURUMU${NC}"
+    echo -e "${YELLOW}═══════════════════════════════════════${NC}\n"
     
-    # Yaygın KNX USB interface vendor ID'leri
-    KNX_VENDORS=("0e77" "135e" "16d0" "147b")
-    
-    for vendor in "${KNX_VENDORS[@]}"; do
-        if lsusb | grep -i "$vendor" > /dev/null; then
-            USB_DEVICE=$(lsusb | grep -i "$vendor")
-            print_success "KNX USB interface bulundu: $USB_DEVICE"
-            return 0
-        fi
-    done
-    
-    print_warning "Belirli bir KNX USB interface bulunamadı."
-    print_status "Bağlı tüm USB cihazlar:"
-    lsusb
-    return 1
-}
-
-# Bağımlılık kontrolü ve kurulum
-install_dependencies() {
-    print_status "Sistem güncelleniyor..."
-    apt update
-    
-    print_status "Gerekli paketler kuruluyor..."
-    apt install -y build-essential cmake git pkg-config \
-                   libusb-1.0-0-dev libsystemd-dev \
-                   libudev-dev libfmt-dev \
-                   systemd-dev
-    
-    if [ $? -eq 0 ]; then
-        print_success "Bağımlılıklar başarıyla kuruldu"
-    else
-        print_error "Bağımlılık kurulumunda hata oluştu"
-        return 1
-    fi
-}
-
-# knxd kurulum
-install_knxd() {
-    check_root "install"
-    
-    print_status "knxd kurulum başlatılıyor..."
-    
-    # Mevcut kurulum kontrolü
+    # KNXd kurulu mu?
     if command -v knxd &> /dev/null; then
-        print_warning "knxd zaten kurulu. Yeniden kurmak için önce kaldırın."
-        read -p "Mevcut kurulumu kaldırıp yeniden kurmak istiyor musunuz? (y/N): " -n 1 -r
-        echo
-        if [[ $REPLY =~ ^[Yy]$ ]]; then
-            uninstall_knxd
+        echo -e "${GREEN}✓ KNXd Kurulu${NC}"
+        knxd --version 2>/dev/null || echo "Versiyon bilgisi alınamadı"
+    else
+        echo -e "${RED}✗ KNXd Kurulu Değil${NC}"
+    fi
+    
+    echo ""
+    
+    # Servis durumu
+    if systemctl list-unit-files | grep -q knxd.service; then
+        echo -e "${GREEN}✓ KNXd Servisi Mevcut${NC}"
+        if systemctl is-active --quiet knxd; then
+            echo -e "${GREEN}✓ Servis Çalışıyor${NC}"
         else
-            return 0
+            echo -e "${RED}✗ Servis Durmuş${NC}"
+        fi
+        
+        if systemctl is-enabled --quiet knxd; then
+            echo -e "${GREEN}✓ Otomatik Başlatma Aktif${NC}"
+        else
+            echo -e "${YELLOW}⚠ Otomatik Başlatma Pasif${NC}"
+        fi
+    else
+        echo -e "${RED}✗ KNXd Servisi Bulunamadı${NC}"
+    fi
+    
+    echo ""
+    
+    # Config dosyası
+    if [ -f /etc/knxd.conf ]; then
+        echo -e "${GREEN}✓ Config Dosyası Mevcut${NC}"
+        echo -e "${CYAN}Config: /etc/knxd.conf${NC}"
+        echo ""
+        cat /etc/knxd.conf
+    else
+        echo -e "${RED}✗ Config Dosyası Bulunamadı${NC}"
+    fi
+    
+    echo -e "\n${YELLOW}═══════════════════════════════════════${NC}"
+}
+
+# 2) KNXd Kurulum
+install_knxd() {
+    echo -e "\n${YELLOW}═══════════════════════════════════════${NC}"
+    echo -e "${YELLOW}  KNXd KURULUM${NC}"
+    echo -e "${YELLOW}═══════════════════════════════════════${NC}\n"
+    
+    if command -v knxd &> /dev/null; then
+        echo -e "${GREEN}✓ KNXd zaten kurulu${NC}"
+        knxd --version
+        read -p "Yeniden kurmak ister misiniz? (e/h): " reinstall
+        if [[ ! $reinstall =~ ^[Ee]$ ]]; then
+            return
         fi
     fi
     
-    install_dependencies
+    echo -e "${YELLOW}Sistem güncelleniyor...${NC}"
+    apt-get update
     
-    # knxd kaynak kodunu indir
-    print_status "knxd kaynak kodu indiriliyor..."
-    cd /tmp
-    rm -rf knxd
-    git clone https://github.com/knxd/knxd.git
-    cd knxd
+    echo -e "${YELLOW}KNXd ve araçları kuruluyor...${NC}"
+    apt-get install -y knxd knxd-tools
     
-    # Derleme ve kurulum
-    print_status "knxd derleniyor..."
-    mkdir build
-    cd build
-    cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local
-    make -j$(nproc)
-    
-    if [ $? -eq 0 ]; then
-        print_status "knxd kuruluyor..."
-        make install
-        ldconfig
-        
-        # Systemd servis dosyası oluştur
-        create_service_file
-        
-        # Varsayılan config dosyası oluştur
-        create_default_config
-        
-        print_success "knxd başarıyla kuruldu"
-    else
-        print_error "knxd derlemesinde hata oluştu"
-        return 1
-    fi
-    
-    # Cleanup
-    cd /
-    rm -rf /tmp/knxd
+    echo -e "${GREEN}✓ KNXd başarıyla kuruldu!${NC}"
+    knxd --version
 }
 
-# Systemd servis dosyası oluştur
-create_service_file() {
-    print_status "Systemd servis dosyası oluşturuluyor..."
+# 3) IP Router Yapılandırma
+configure_router() {
+    echo -e "\n${YELLOW}═══════════════════════════════════════${NC}"
+    echo -e "${YELLOW}  IP ROUTER YAPILANDIRMA${NC}"
+    echo -e "${YELLOW}═══════════════════════════════════════${NC}\n"
     
-    cat > $SERVICE_FILE << 'EOF'
+    # Mevcut config varsa göster
+    if [ -f /etc/knxd.conf ]; then
+        echo -e "${CYAN}Mevcut yapılandırma:${NC}"
+        cat /etc/knxd.conf
+        echo ""
+    fi
+    
+    read -p "KNX IP Router IP adresi (örn: 192.168.1.100): " KNX_IP
+    read -p "KNX IP Router portu (varsayılan 3671): " KNX_PORT
+    KNX_PORT=${KNX_PORT:-3671}
+    
+    read -p "KNXd fiziksel adresi (örn: 1.1.250): " PHY_ADDR
+    PHY_ADDR=${PHY_ADDR:-1.1.250}
+    
+    # Config dosyası oluştur
+    cat > /etc/knxd.conf << EOF
+# KNXd Yapılandırma Dosyası
+# Oluşturulma: $(date)
+
+[main]
+addr = $PHY_ADDR
+client-addrs = 1.1.251:8
+connections = router
+
+[A]
+driver = ip
+
+[router]
+server = knxd_tcp
+router = A
+ip-address = $KNX_IP
+port = $KNX_PORT
+EOF
+
+    echo -e "${GREEN}✓ Yapılandırma dosyası oluşturuldu${NC}"
+    
+    # Systemd servis dosyası
+    cat > /etc/systemd/system/knxd.service << EOF
 [Unit]
 Description=KNX Daemon
 After=network.target
-Wants=network.target
 
 [Service]
-Type=notify
-ExecStart=/usr/local/bin/knxd --config=/etc/knxd.conf
-ExecReload=/bin/kill -HUP $MAINPID
-Restart=on-failure
-RestartSec=5
-User=knxd
-Group=knxd
-StandardOutput=journal
-StandardError=journal
+Type=simple
+ExecStart=/usr/bin/knxd -c /etc/knxd.conf
+Restart=always
+RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    # knxd kullanıcısı oluştur
-    if ! id "knxd" &>/dev/null; then
-        print_status "knxd kullanıcısı oluşturuluyor..."
-        useradd -r -s /bin/false knxd
-    fi
-    
     systemctl daemon-reload
-    print_success "Systemd servis dosyası oluşturuldu"
-}
-
-# Varsayılan config dosyası oluştur
-create_default_config() {
-    print_status "Varsayılan konfigürasyon dosyası oluşturuluyor..."
-    
-    cat > $CONFIG_FILE << 'EOF'
-# KNX Daemon Configuration
-# USB Interface Configuration
-
-[main]
-addr = 1.1.128
-client-addrs = 1.1.129:8
-
-[A.usb]
-device = /dev/ttyACM0
-driver = ft12cemi
-
-[server]
-interface = usb
-name = knxd_server
-systemd-ignore = false
-
-[debug]
-error-level = warning
-trace-mask = 0
-
-# Uncomment and modify these lines for your specific USB device:
-# [A.usb]
-# device = auto
-# driver = auto
-EOF
-    
-    print_success "Konfigürasyon dosyası oluşturuldu: $CONFIG_FILE"
-}
-
-# knxd başlat
-start_knxd() {
-    check_root "start"
-    
-    print_status "knxd başlatılıyor..."
-    
-    if ! command -v knxd &> /dev/null; then
-        print_error "knxd kurulu değil. Önce kurulum yapın: $0 install"
-        return 1
-    fi
-    
-    systemctl start knxd
     systemctl enable knxd
     
-    if [ $? -eq 0 ]; then
-        print_success "knxd başlatıldı ve otomatik başlatma etkinleştirildi"
-    else
-        print_error "knxd başlatılamadı"
-        print_status "Hata detayları için: journalctl -u knxd -f"
+    echo -e "${YELLOW}Servisi yeniden başlatmak ister misiniz? (e/h): ${NC}"
+    read restart_service
+    if [[ $restart_service =~ ^[Ee]$ ]]; then
+        systemctl restart knxd
+        sleep 2
+        if systemctl is-active --quiet knxd; then
+            echo -e "${GREEN}✓ Servis başarıyla başlatıldı${NC}"
+        else
+            echo -e "${RED}✗ Servis başlatılamadı. Logları kontrol edin.${NC}"
+        fi
     fi
 }
 
-# knxd durdur
-stop_knxd() {
-    check_root "stop"
+# 4) Bağlantı Testi
+test_connection() {
+    echo -e "\n${YELLOW}═══════════════════════════════════════${NC}"
+    echo -e "${YELLOW}  BAĞLANTI TESTİ${NC}"
+    echo -e "${YELLOW}═══════════════════════════════════════${NC}\n"
     
-    print_status "knxd durduruluyor..."
+    if ! systemctl is-active --quiet knxd; then
+        echo -e "${RED}✗ KNXd servisi çalışmıyor!${NC}"
+        echo -e "${YELLOW}Önce servisi başlatın (Seçenek 8)${NC}"
+        return
+    fi
     
-    systemctl stop knxd
-    systemctl disable knxd
+    echo -e "${YELLOW}KNX bağlantısı test ediliyor...${NC}"
+    sleep 1
     
-    if [ $? -eq 0 ]; then
-        print_success "knxd durduruldu ve otomatik başlatma devre dışı bırakıldı"
+    if timeout 5 knxtool groupsocketlisten ip:localhost >/dev/null 2>&1 &
+    then
+        LISTEN_PID=$!
+        sleep 2
+        kill $LISTEN_PID 2>/dev/null
+        echo -e "${GREEN}✓ KNX bağlantısı başarılı!${NC}"
+        echo -e "${GREEN}IP Router ile bağlantı kuruldu.${NC}"
     else
-        print_error "knxd durdurulamadı"
+        echo -e "${RED}✗ KNX bağlantısı kurulamadı${NC}"
+        echo -e "${YELLOW}Config ayarlarını kontrol edin (Seçenek 3)${NC}"
     fi
 }
 
-# knxd yeniden başlat
-restart_knxd() {
-    check_root "restart"
+# 5) Grup Adresi Okuma
+read_group() {
+    echo -e "\n${YELLOW}═══════════════════════════════════════${NC}"
+    echo -e "${YELLOW}  GRUP ADRESİ OKUMA${NC}"
+    echo -e "${YELLOW}═══════════════════════════════════════${NC}\n"
     
-    print_status "knxd yeniden başlatılıyor..."
+    read -p "Grup adresi (örn: 1/2/3): " GROUP_ADDR
     
-    systemctl restart knxd
-    
-    if [ $? -eq 0 ]; then
-        print_success "knxd yeniden başlatıldı"
+    echo -e "${YELLOW}Okunuyor: $GROUP_ADDR${NC}"
+    if knxtool groupread ip:localhost "$GROUP_ADDR"; then
+        echo -e "${GREEN}✓ Okuma başarılı${NC}"
     else
-        print_error "knxd yeniden başlatılamadı"
+        echo -e "${RED}✗ Okuma başarısız${NC}"
     fi
 }
 
-# knxd durum
-status_knxd() {
-    print_status "knxd durum bilgisi:"
-    echo "========================"
+# 6) Grup Adresi Yazma
+write_group() {
+    echo -e "\n${YELLOW}═══════════════════════════════════════${NC}"
+    echo -e "${YELLOW}  GRUP ADRESİ YAZMA${NC}"
+    echo -e "${YELLOW}═══════════════════════════════════════${NC}\n"
     
-    # Kurulum durumu
-    if command -v knxd &> /dev/null; then
-        VERSION=$(knxd --version 2>&1 | head -n1)
-        print_success "knxd kurulu: $VERSION"
+    read -p "Grup adresi (örn: 1/2/3): " GROUP_ADDR
+    read -p "Değer (0 veya 1): " VALUE
+    
+    echo -e "${YELLOW}Yazılıyor: $GROUP_ADDR = $VALUE${NC}"
+    if knxtool groupwrite ip:localhost "$GROUP_ADDR" "$VALUE"; then
+        echo -e "${GREEN}✓ Yazma başarılı!${NC}"
     else
-        print_error "knxd kurulu değil"
-        return 1
+        echo -e "${RED}✗ Yazma başarısız${NC}"
     fi
-    
-    # Servis durumu
-    if systemctl is-active --quiet knxd; then
-        print_success "Servis durumu: ÇALIŞIYOR"
-    else
-        print_error "Servis durumu: DURMUŞ"
-    fi
-    
-    # Otomatik başlatma durumu
-    if systemctl is-enabled --quiet knxd; then
-        print_success "Otomatik başlatma: ETKİN"
-    else
-        print_warning "Otomatik başlatma: DEVRE DIŞI"
-    fi
-    
-    # USB cihaz durumu
-    check_usb_device
-    
-    # Son 10 log satırı
-    if [ -f "$LOG_FILE" ]; then
-        echo
-        print_status "Son log kayıtları:"
-        tail -n 10 "$LOG_FILE"
-    fi
-    
-    echo
-    print_status "Detaylı log için: journalctl -u knxd -f"
 }
 
-# Konfigürasyon editörü
-config_knxd() {
-    check_root "config"
+# 7) Grup Adresleri Dinleme
+listen_groups() {
+    echo -e "\n${YELLOW}═══════════════════════════════════════${NC}"
+    echo -e "${YELLOW}  GRUP ADRESLERİ DİNLEME${NC}"
+    echo -e "${YELLOW}═══════════════════════════════════════${NC}\n"
     
-    if [ ! -f "$CONFIG_FILE" ]; then
-        print_error "Konfigürasyon dosyası bulunamadı: $CONFIG_FILE"
-        print_status "Önce knxd kurulumu yapın: $0 install"
-        return 1
-    fi
+    echo -e "${CYAN}Tüm grup adresleri dinleniyor...${NC}"
+    echo -e "${YELLOW}Durdurmak için CTRL+C basın${NC}\n"
     
-    echo "========================"
-    print_status "KNX Konfigürasyon Menüsü"
-    echo "========================"
-    echo "1) Konfigürasyonu düzenle"
-    echo "2) Konfigürasyonu görüntüle"
-    echo "3) USB cihaz ayarları"
-    echo "4) Server ayarları"
-    echo "5) Debug ayarları"
-    echo "6) Varsayılan konfigürasyonu yükle"
-    echo "0) Ana menüye dön"
-    echo
+    knxtool groupsocketlisten ip:localhost
+}
+
+# 8) Servis Yönetimi
+manage_service() {
+    echo -e "\n${YELLOW}═══════════════════════════════════════${NC}"
+    echo -e "${YELLOW}  SERVİS YÖNETİMİ${NC}"
+    echo -e "${YELLOW}═══════════════════════════════════════${NC}\n"
     
-    read -p "Seçiminiz (0-6): " choice
+    echo -e "${BLUE}1)${NC} Servisi Başlat"
+    echo -e "${BLUE}2)${NC} Servisi Durdur"
+    echo -e "${BLUE}3)${NC} Servisi Yeniden Başlat"
+    echo -e "${BLUE}4)${NC} Servis Durumu"
+    echo -e "${BLUE}5)${NC} Otomatik Başlatmayı Aç"
+    echo -e "${BLUE}6)${NC} Otomatik Başlatmayı Kapat"
+    echo ""
+    read -p "Seçiminiz: " service_choice
     
-    case $choice in
+    case $service_choice in
         1)
-            if command -v nano &> /dev/null; then
-                nano "$CONFIG_FILE"
-            elif command -v vi &> /dev/null; then
-                vi "$CONFIG_FILE"
-            else
-                print_error "Metin editörü bulunamadı"
-            fi
+            systemctl start knxd
+            echo -e "${GREEN}✓ Servis başlatıldı${NC}"
             ;;
         2)
-            print_status "Mevcut konfigürasyon:"
-            cat "$CONFIG_FILE"
+            systemctl stop knxd
+            echo -e "${GREEN}✓ Servis durduruldu${NC}"
             ;;
         3)
-            configure_usb_device
+            systemctl restart knxd
+            echo -e "${GREEN}✓ Servis yeniden başlatıldı${NC}"
             ;;
         4)
-            configure_server
+            systemctl status knxd
             ;;
         5)
-            configure_debug
+            systemctl enable knxd
+            echo -e "${GREEN}✓ Otomatik başlatma aktif${NC}"
             ;;
         6)
-            create_default_config
-            ;;
-        0|*)
-            return 0
-            ;;
-    esac
-}
-
-# USB cihaz konfigürasyonu
-configure_usb_device() {
-    echo
-    print_status "USB Cihaz Konfigürasyonu"
-    echo "========================"
-    
-    # Mevcut USB cihazları listele
-    print_status "Bağlı USB cihazlar:"
-    lsusb
-    echo
-    
-    read -p "USB cihaz yolu (/dev/ttyACM0, /dev/ttyUSB0, auto): " device
-    device=${device:-auto}
-    
-    read -p "Sürücü tipi (ft12cemi, tpuart, auto): " driver
-    driver=${driver:-auto}
-    
-    # Konfigürasyon dosyasını güncelle
-    sed -i "/^\[A\.usb\]/,/^$/ { 
-        s/device = .*/device = $device/
-        s/driver = .*/driver = $driver/
-    }" "$CONFIG_FILE"
-    
-    print_success "USB cihaz konfigürasyonu güncellendi"
-}
-
-# Server konfigürasyonu
-configure_server() {
-    echo
-    print_status "Server Konfigürasyonu"
-    echo "====================="
-    
-    read -p "KNX adresi (1.1.128): " addr
-    addr=${addr:-1.1.128}
-    
-    read -p "Client adres aralığı (1.1.129:8): " client_addrs
-    client_addrs=${client_addrs:-1.1.129:8}
-    
-    # Konfigürasyon dosyasını güncelle
-    sed -i "s/addr = .*/addr = $addr/" "$CONFIG_FILE"
-    sed -i "s/client-addrs = .*/client-addrs = $client_addrs/" "$CONFIG_FILE"
-    
-    print_success "Server konfigürasyonu güncellendi"
-}
-
-# Debug konfigürasyonu
-configure_debug() {
-    echo
-    print_status "Debug Konfigürasyonu"
-    echo "===================="
-    
-    echo "Log seviyeleri: fatal, critical, error, warning, info, debug, trace"
-    read -p "Log seviyesi (warning): " log_level
-    log_level=${log_level:-warning}
-    
-    read -p "Trace mask (0): " trace_mask
-    trace_mask=${trace_mask:-0}
-    
-    # Konfigürasyon dosyasını güncelle
-    sed -i "s/error-level = .*/error-level = $log_level/" "$CONFIG_FILE"
-    sed -i "s/trace-mask = .*/trace-mask = $trace_mask/" "$CONFIG_FILE"
-    
-    print_success "Debug konfigürasyonu güncellendi"
-}
-
-# knxd kaldır
-uninstall_knxd() {
-    check_root "uninstall"
-    
-    print_warning "knxd tamamen kaldırılacak!"
-    read -p "Devam etmek istediğinizden emin misiniz? (y/N): " -n 1 -r
-    echo
-    
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        print_status "İşlem iptal edildi"
-        return 0
-    fi
-    
-    print_status "knxd kaldırılıyor..."
-    
-    # Servisi durdur ve devre dışı bırak
-    systemctl stop knxd 2>/dev/null
-    systemctl disable knxd 2>/dev/null
-    
-    # Dosyaları kaldır
-    rm -f /usr/local/bin/knxd*
-    rm -f /usr/local/lib/libknxd*
-    rm -f "$SERVICE_FILE"
-    rm -f "$CONFIG_FILE"
-    rm -f "$LOG_FILE"
-    
-    # Kullanıcıyı kaldır
-    userdel knxd 2>/dev/null
-    
-    systemctl daemon-reload
-    
-    print_success "knxd başarıyla kaldırıldı"
-}
-
-# Ana menü
-show_menu() {
-    clear
-    echo "=================================="
-    echo "   KNX USB Interface Yöneticisi   "
-    echo "=================================="
-    echo "1) knxd kurulum yap"
-    echo "2) knxd başlat"
-    echo "3) knxd durdur"
-    echo "4) knxd yeniden başlat"
-    echo "5) knxd durumunu göster"
-    echo "6) knxd konfigürasyon"
-    echo "7) knxd kaldır"
-    echo "8) USB cihaz kontrolü"
-    echo "0) Çıkış"
-    echo "=================================="
-}
-
-# Ana program mantığı
-main() {
-    case "$1" in
-        install)
-            install_knxd
-            ;;
-        start)
-            start_knxd
-            ;;
-        stop)
-            stop_knxd
-            ;;
-        restart)
-            restart_knxd
-            ;;
-        status)
-            status_knxd
-            ;;
-        config)
-            config_knxd
-            ;;
-        uninstall)
-            uninstall_knxd
-            ;;
-        usb-check)
-            check_usb_device
+            systemctl disable knxd
+            echo -e "${GREEN}✓ Otomatik başlatma pasif${NC}"
             ;;
         *)
-            if [ $# -eq 0 ]; then
-                # İnteraktif menü
-                while true; do
-                    show_menu
-                    read -p "Seçiminizi yapın (0-8): " choice
-                    
-                    case $choice in
-                        1) install_knxd; read -p "Devam etmek için Enter'a basın..." ;;
-                        2) start_knxd; read -p "Devam etmek için Enter'a basın..." ;;
-                        3) stop_knxd; read -p "Devam etmek için Enter'a basın..." ;;
-                        4) restart_knxd; read -p "Devam etmek için Enter'a basın..." ;;
-                        5) status_knxd; read -p "Devam etmek için Enter'a basın..." ;;
-                        6) config_knxd; read -p "Devam etmek için Enter'a basın..." ;;
-                        7) uninstall_knxd; read -p "Devam etmek için Enter'a basın..." ;;
-                        8) check_usb_device; read -p "Devam etmek için Enter'a basın..." ;;
-                        0) exit 0 ;;
-                        *) print_error "Geçersiz seçim!" ;;
-                    esac
-                done
-            else
-                echo "Kullanım: $0 [install|start|stop|restart|status|config|uninstall|usb-check]"
-                echo
-                echo "Komutlar:"
-                echo "  install    - knxd kurulumunu yap"
-                echo "  start      - knxd servisini başlat"
-                echo "  stop       - knxd servisini durdur"
-                echo "  restart    - knxd servisini yeniden başlat"
-                echo "  status     - knxd durumunu göster"
-                echo "  config     - knxd konfigürasyonunu düzenle"
-                echo "  uninstall  - knxd'yi tamamen kaldır"
-                echo "  usb-check  - USB KNX cihazlarını kontrol et"
-                echo
-                echo "Parametre olmadan çalıştırırsanız interaktif menü açılır."
-            fi
+            echo -e "${RED}Geçersiz seçim${NC}"
             ;;
     esac
 }
 
-# Ana fonksiyonu çalıştır
-main "$@"
+# 9) Logları Görüntüle
+view_logs() {
+    echo -e "\n${YELLOW}═══════════════════════════════════════${NC}"
+    echo -e "${YELLOW}  LOGLARI GÖRÜNTÜLE${NC}"
+    echo -e "${YELLOW}═══════════════════════════════════════${NC}\n"
+    
+    echo -e "${BLUE}1)${NC} Son 50 satır"
+    echo -e "${BLUE}2)${NC} Canlı log takibi (CTRL+C ile çık)"
+    echo -e "${BLUE}3)${NC} Tüm loglar"
+    echo ""
+    read -p "Seçiminiz: " log_choice
+    
+    case $log_choice in
+        1)
+            journalctl -u knxd -n 50 --no-pager
+            ;;
+        2)
+            echo -e "${YELLOW}Canlı log takibi... (CTRL+C ile çıkın)${NC}\n"
+            journalctl -u knxd -f
+            ;;
+        3)
+            journalctl -u knxd --no-pager
+            ;;
+        *)
+            echo -e "${RED}Geçersiz seçim${NC}"
+            ;;
+    esac
+}
+
+# Ana döngü
+main() {
+    check_root
+    
+    while true; do
+        show_banner
+        show_menu
+        
+        read -p "Seçiminiz (0-9): " choice
+        
+        case $choice in
+            1)
+                check_status
+                ;;
+            2)
+                install_knxd
+                ;;
+            3)
+                configure_router
+                ;;
+            4)
+                test_connection
+                ;;
+            5)
+                read_group
+                ;;
+            6)
+                write_group
+                ;;
+            7)
+                listen_groups
+                ;;
+            8)
+                manage_service
+                ;;
+            9)
+                view_logs
+                ;;
+            0)
+                echo -e "\n${GREEN}Çıkılıyor... Hoşça kalın!${NC}\n"
+                exit 0
+                ;;
+            *)
+                echo -e "${RED}Geçersiz seçim! Lütfen 0-9 arası bir değer girin.${NC}"
+                ;;
+        esac
+        
+        echo -e "\n${CYAN}Devam etmek için Enter tuşuna basın...${NC}"
+        read
+    done
+}
+
+# Programı başlat
+main
