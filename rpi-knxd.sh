@@ -167,10 +167,10 @@ configure_router() {
     echo -e "${BLUE}2)${NC} Eski format (KNXD_OPTIONS)"
     read -p "Seçiminiz (1/2): " config_format
     
-    # /etc/default/knxd dosyası oluştur
+    # /etc/knxd.conf dosyası oluştur
     if [[ $config_format == "1" ]]; then
         # Yeni format
-        cat > /etc/default/knxd << EOF
+        cat > /etc/knxd.conf << EOF
 # KNXd Yapılandırma Dosyası (Yeni Format)
 # Oluşturulma: $(date)
 
@@ -178,37 +178,12 @@ KNXD_OPTS="--eibaddr=$PHY_ADDR --client-addrs=$CLIENT_ADDR --listen-local=/tmp/k
 EOF
     else
         # Eski format
-        cat > /etc/default/knxd << EOF
+        cat > /etc/knxd.conf << EOF
 # KNXd Yapılandırma Dosyası (Eski Format)
 # Oluşturulma: $(date)
 
 KNXD_OPTIONS="-e $PHY_ADDR -E $CLIENT_ADDR -D -T -R -S -i --listen-local=/tmp/knx -b ipt:$KNX_IP:$KNX_PORT"
-EOF
-    fi
-    
-    echo -e "${GREEN}✓ /etc/default/knxd dosyası oluşturuldu${NC}"
-    
-    # /etc/knxd.conf dosyası oluştur (alternatif format)
-    cat > /etc/knxd.conf << EOF
-# KNXd INI Formatı Yapılandırma
-# Oluşturulma: $(date)
 
-[main]
-addr = $PHY_ADDR
-client-addrs = $CLIENT_ADDR
-connections = router
-logfile = /var/log/knxd.log
-
-[A]
-driver = ipt
-ip-address = $KNX_IP
-dest-port = $KNX_PORT
-
-[router]
-driver = router
-addr = 0.0.1
-device = A
-name = router
 EOF
 
     echo -e "${GREEN}✓ /etc/knxd.conf dosyası oluşturuldu${NC}"
