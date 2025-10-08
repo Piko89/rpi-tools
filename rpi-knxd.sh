@@ -16,10 +16,10 @@ NC='\033[0m' # No Color
 # Banner
 show_banner() {
     clear
-    echo -e "${CYAN}╔════════════════════════════════════════╗${NC}"
+    echo -e "${CYAN}╔═══════════════════════════════════════╗${NC}"
     echo -e "${CYAN}║     KNXd Yönetim ve Kontrol Paneli    ║${NC}"
     echo -e "${CYAN}║          Raspberry Pi için            ║${NC}"
-    echo -e "${CYAN}╚════════════════════════════════════════╝${NC}\n"
+    echo -e "${CYAN}╚═══════════════════════════════════════╝${NC}\n"
 }
 
 # Ana Menü
@@ -44,7 +44,7 @@ show_menu() {
 check_root() {
     if [ "$EUID" -ne 0 ]; then 
         echo -e "${RED}Bu script root yetkisi ile çalıştırılmalıdır!${NC}"
-        echo "Lütfen 'sudo ./rpi-knxd.sh' komutu ile çalıştırın"
+        echo "Lütfen 'sudo ./knxd_setup.sh' komutu ile çalıştırın"
         exit 1
     fi
 }
@@ -95,15 +95,6 @@ check_status() {
         echo -e "${RED}✗ Config Dosyası Bulunamadı${NC}"
     fi
     
-    # Default config dosyası (varsa)
-    if [ -f /etc/default/knxd ]; then
-        echo ""
-        echo -e "${GREEN}✓ Default Config Dosyası Mevcut${NC}"
-        echo -e "${CYAN}Config: /etc/default/knxd${NC}"
-        echo ""
-        cat /etc/default/knxd
-    fi
-    
     echo -e "\n${YELLOW}═══════════════════════════════════════${NC}"
 }
 
@@ -140,14 +131,8 @@ configure_router() {
     
     # Mevcut config varsa göster
     if [ -f /etc/knxd.conf ]; then
-        echo -e "${CYAN}Mevcut knxd.conf yapılandırması:${NC}"
+        echo -e "${CYAN}Mevcut yapılandırma:${NC}"
         cat /etc/knxd.conf
-        echo ""
-    fi
-    
-    if [ -f /etc/default/knxd ]; then
-        echo -e "${CYAN}Mevcut /etc/default/knxd yapılandırması:${NC}"
-        cat /etc/default/knxd
         echo ""
     fi
     
@@ -158,79 +143,44 @@ configure_router() {
     read -p "KNXd fiziksel adresi (örn: 1.1.250): " PHY_ADDR
     PHY_ADDR=${PHY_ADDR:-1.1.250}
     
-    read -p "Client adres aralığı (örn: 1.1.251:8): " CLIENT_ADDR
-    CLIENT_ADDR=${CLIENT_ADDR:-1.1.251:8}
-    
-    echo ""
-    echo -e "${YELLOW}Yapılandırma yöntemi seçin:${NC}"
-    echo -e "${BLUE}1)${NC} Yeni format (KNXD_OPTS - Önerilen)"
-    echo -e "${BLUE}2)${NC} Eski format (KNXD_OPTIONS)"
-    read -p "Seçiminiz (1/2): " config_format
-    
-    # /etc/knxd.conf dosyası oluştur
-    if [[ $config_format == "1" ]]; then
-        # Yeni format
-        cat > /etc/knxd.conf << EOF
-# KNXd Yapılandırma Dosyası (Yeni Format)
+    # Config dosyası oluştur
+    cat > /etc/knxd.conf << EOF
+# KNXd Yapılandırma Dosyası
 # Oluşturulma: $(date)
 
-KNXD_OPTS="--eibaddr=$PHY_ADDR --client-addrs=$CLIENT_ADDR --listen-local=/tmp/knx --trace=5 --error=5 ipt:$KNX_IP:$KNX_PORT"
-EOF
-    else
-        # Eski format
-        cat > /etc/knxd.conf << EOF
-# KNXd Yapılandırma Dosyası (Eski Format)
-# Oluşturulma: $(date)
-
-KNXD_OPTIONS="-e $PHY_ADDR -E $CLIENT_ADDR -D -T -R -S -i --listen-local=/tmp/knx -b ipt:$KNX_IP:$KNX_PORT"
-
+KNXD_OPTS="--eibaddr=PHY_ADDR:-1.1.250 --listen-local=/tmp/knx --trace=5 --error=5 ipt:$KNX_IP:$KNX_PORT" 
 EOF
 
-    echo -e "${GREEN}✓ /etc/knxd.conf dosyası oluşturuldu${NC}"
+    echo -e "${GREEN}✓ Yapılandırma dosyası oluşturuldu${NC}"
     
     # Systemd servis dosyası
     cat > /etc/systemd/system/knxd.service << EOF
 [Unit]
 Description=KNX Daemon
 After=network.target
-Wants=network-online.target
 
 [Service]
-Type=notify
-EnvironmentFile=-/etc/default/knxd
-ExecStart=/usr/bin/knxd \$KNXD_OPTS
+Type=simple
+ExecStart=/usr/bin/knxd -c /etc/knxd.conf
 Restart=always
 RestartSec=10
-StandardOutput=journal
-StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-    echo -e "${GREEN}✓ Systemd servis dosyası oluşturuldu${NC}"
-    
     systemctl daemon-reload
     systemctl enable knxd
     
-    echo ""
-    echo -e "${YELLOW}Yapılandırma tamamlandı!${NC}"
-    echo ""
-    echo -e "${CYAN}Oluşturulan dosyalar:${NC}"
-    echo "  - /etc/default/knxd (Ana yapılandırma)"
-    echo "  - /etc/knxd.conf (Alternatif yapılandırma)"
-    echo "  - /etc/systemd/system/knxd.service"
-    echo ""
-    
-    read -p "Servisi yeniden başlatmak ister misiniz? (e/h): " restart_service
+    echo -e "${YELLOW}Servisi yeniden başlatmak ister misiniz? (e/h): ${NC}"
+    read restart_service
     if [[ $restart_service =~ ^[Ee]$ ]]; then
         systemctl restart knxd
         sleep 2
         if systemctl is-active --quiet knxd; then
             echo -e "${GREEN}✓ Servis başarıyla başlatıldı${NC}"
         else
-            echo -e "${RED}✗ Servis başlatılamadı. Logları kontrol edin:${NC}"
-            echo "  journalctl -u knxd -n 20"
+            echo -e "${RED}✗ Servis başlatılamadı. Logları kontrol edin.${NC}"
         fi
     fi
 }
@@ -248,20 +198,9 @@ test_connection() {
     fi
     
     echo -e "${YELLOW}KNX bağlantısı test ediliyor...${NC}"
-    echo -e "${CYAN}Socket: /tmp/knx${NC}"
     sleep 1
     
-    # Socket var mı kontrol et
-    if [ ! -S /tmp/knx ]; then
-        echo -e "${RED}✗ KNX socket bulunamadı (/tmp/knx)${NC}"
-        echo -e "${YELLOW}Servisi yeniden başlatmayı deneyin${NC}"
-        return
-    fi
-    
-    echo -e "${GREEN}✓ KNX socket mevcut${NC}"
-    
-    # Bağlantı testi
-    if timeout 5 knxtool groupsocketlisten local:/tmp/knx >/dev/null 2>&1 &
+    if timeout 5 knxtool groupsocketlisten ip:localhost >/dev/null 2>&1 &
     then
         LISTEN_PID=$!
         sleep 2
@@ -270,7 +209,7 @@ test_connection() {
         echo -e "${GREEN}IP Router ile bağlantı kuruldu.${NC}"
     else
         echo -e "${RED}✗ KNX bağlantısı kurulamadı${NC}"
-        echo -e "${YELLOW}Logları kontrol edin: journalctl -u knxd -n 50${NC}"
+        echo -e "${YELLOW}Config ayarlarını kontrol edin (Seçenek 3)${NC}"
     fi
 }
 
@@ -283,11 +222,10 @@ read_group() {
     read -p "Grup adresi (örn: 1/2/3): " GROUP_ADDR
     
     echo -e "${YELLOW}Okunuyor: $GROUP_ADDR${NC}"
-    if knxtool groupread local:/tmp/knx "$GROUP_ADDR"; then
+    if knxtool groupread ip:localhost "$GROUP_ADDR"; then
         echo -e "${GREEN}✓ Okuma başarılı${NC}"
     else
         echo -e "${RED}✗ Okuma başarısız${NC}"
-        echo -e "${YELLOW}Socket kontrolü: ls -la /tmp/knx${NC}"
     fi
 }
 
@@ -301,11 +239,10 @@ write_group() {
     read -p "Değer (0 veya 1): " VALUE
     
     echo -e "${YELLOW}Yazılıyor: $GROUP_ADDR = $VALUE${NC}"
-    if knxtool groupwrite local:/tmp/knx "$GROUP_ADDR" "$VALUE"; then
+    if knxtool groupwrite ip:localhost "$GROUP_ADDR" "$VALUE"; then
         echo -e "${GREEN}✓ Yazma başarılı!${NC}"
     else
         echo -e "${RED}✗ Yazma başarısız${NC}"
-        echo -e "${YELLOW}Socket kontrolü: ls -la /tmp/knx${NC}"
     fi
 }
 
@@ -318,7 +255,7 @@ listen_groups() {
     echo -e "${CYAN}Tüm grup adresleri dinleniyor...${NC}"
     echo -e "${YELLOW}Durdurmak için CTRL+C basın${NC}\n"
     
-    knxtool groupsocketlisten local:/tmp/knx
+    knxtool groupsocketlisten ip:localhost
 }
 
 # 8) Servis Yönetimi
@@ -339,13 +276,7 @@ manage_service() {
     case $service_choice in
         1)
             systemctl start knxd
-            sleep 2
-            if systemctl is-active --quiet knxd; then
-                echo -e "${GREEN}✓ Servis başlatıldı${NC}"
-            else
-                echo -e "${RED}✗ Servis başlatılamadı${NC}"
-                journalctl -u knxd -n 10 --no-pager
-            fi
+            echo -e "${GREEN}✓ Servis başlatıldı${NC}"
             ;;
         2)
             systemctl stop knxd
@@ -353,13 +284,7 @@ manage_service() {
             ;;
         3)
             systemctl restart knxd
-            sleep 2
-            if systemctl is-active --quiet knxd; then
-                echo -e "${GREEN}✓ Servis yeniden başlatıldı${NC}"
-            else
-                echo -e "${RED}✗ Servis başlatılamadı${NC}"
-                journalctl -u knxd -n 10 --no-pager
-            fi
+            echo -e "${GREEN}✓ Servis yeniden başlatıldı${NC}"
             ;;
         4)
             systemctl status knxd
@@ -387,7 +312,6 @@ view_logs() {
     echo -e "${BLUE}1)${NC} Son 50 satır"
     echo -e "${BLUE}2)${NC} Canlı log takibi (CTRL+C ile çık)"
     echo -e "${BLUE}3)${NC} Tüm loglar"
-    echo -e "${BLUE}4)${NC} Sadece hata logları"
     echo ""
     read -p "Seçiminiz: " log_choice
     
@@ -401,9 +325,6 @@ view_logs() {
             ;;
         3)
             journalctl -u knxd --no-pager
-            ;;
-        4)
-            journalctl -u knxd -p err --no-pager
             ;;
         *)
             echo -e "${RED}Geçersiz seçim${NC}"
